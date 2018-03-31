@@ -1,4 +1,3 @@
-import abc
 import collections
 import mimetypes
 import pathlib
@@ -7,6 +6,10 @@ import typing
 import jinja2
 import markdown
 import yaml
+
+
+mimetypes.add_type('text/markdown', '.md', False)
+mimetypes.add_type('text/markdown', '.markdown', True)
 
 
 class TemplateLoader(jinja2.BaseLoader):
@@ -36,7 +39,9 @@ class TemplateLoader(jinja2.BaseLoader):
 
         mtime = path.stat().st_mtime
 
-        return source, path.resolve(), lambda: path.stat().st_mtime == mtime
+        return (source,
+                str(path.resolve()),
+                lambda: path.stat().st_mtime == mtime)
 
 
 def merge_dict(x: dict, y: dict) -> dict:
@@ -78,7 +83,7 @@ class Config(collections.abc.Mapping):
             self._config = {}
 
         if parent is not None:
-            self._config = merge_dict(dict(parent), self._config)
+            self._config = merge_dict(parent.as_dict(), self._config)
 
     @classmethod
     def from_path(cls,
@@ -91,6 +96,12 @@ class Config(collections.abc.Mapping):
         except FileNotFoundError:
             return cls('', parent)
 
+    def __str__(self):
+        return str(self._config)
+
+    def as_dict(self) -> dict:
+        return dict(self._config)
+
     def __getitem__(self, key: str) -> object:
         return self._config.get(key)
 
@@ -100,14 +111,25 @@ class Config(collections.abc.Mapping):
     def __len__(self) -> int:
         return len(self._config)
 
-    def __dict__(self, key: str) -> dict:
-        return dict(self._config)
-
-    def __str__(self):
-        return str(self._config)
-
     def overlay(self, another: dict) -> 'Config':
         return Config(merge_dict(self._config, another), self)
+
+
+def read_renderable_file(file_: typing.IO) -> typing.Tuple[Config, str]:
+    headers: typing.List[str] = []
+    contents: typing.List[str] = []
+
+    target = headers
+    for i, line in enumerate(file_):
+        if i == 0:
+            continue
+
+        if line == '---\n' and target is not contents:
+            target = contents
+            continue
+        target.append(line)
+
+    return Config(''.join(headers)), ''.join(contents)
 
 
 class Page:
@@ -126,26 +148,14 @@ class Page:
             pass
 
         if self.renderable:
-            headers = []
-            contents = []
             with path.open() as f:
-                target = headers
-                for i, line in enumerate(f):
-                    if i == 0:
-                        continue
-
-                    if line == '---\n' and target is not contents:
-                        target = contents
-                        continue
-                    target.append(line)
-            header = ''.join(headers)
-            self.content = ''.join(contents)
+                config, self.content = read_renderable_file(f)
         else:
-            header = ''
+            config = Config('')
             with path.open('rb') as f:
                 self.content = f.read()
 
-        self.config = parent.config.overlay({'page': dict(Config(header))})
+        self.config = parent.config.overlay({'page': config.as_dict()})
         self.config = self.config.overlay({'page': {
             'path': self.output_path,
             'url': self.url,
@@ -156,8 +166,6 @@ class Page:
 
     @property
     def type(self) -> typing.Optional[str]:
-        mimetypes.add_type('text/markdown', '.md', False)
-        mimetypes.add_type('text/markdown', '.markdown', True)
         return mimetypes.guess_type(self.path.name, False)[0]
 
     @property
@@ -168,7 +176,7 @@ class Page:
 
     @property
     def template(self) -> jinja2.Template:
-        if self.is_dir:
+        if isinstance(self, Directory):
             return self.template_environment.get_template(self.layout)
         else:
             return self.parent.template_environment.get_template(self.layout)
@@ -181,10 +189,10 @@ class Page:
         ignore_urls.add(self.url)
 
         base = self
-        if not self.is_dir and self.output_path.name == 'index.html':
+        if (not isinstance(self, Directory) and self.path.stem == 'index'):
             base = self.parent
 
-        if not base.is_dir:
+        if not isinstance(base, Directory):
             return {
                 'children': [],
                 'brothers': [],
@@ -214,10 +222,6 @@ class Page:
         return True
 
     @property
-    def is_dir(self) -> bool:
-        return False
-
-    @property
     def root_path(self) -> pathlib.Path:
         if self.parent is None:
             return self.path
@@ -233,7 +237,7 @@ class Page:
         return self.relative_path.parent / (self.path.stem + '.html')
 
     @property
-    def url(self, directory_type: str = 'slash') -> pathlib.Path:
+    def url(self) -> str:
         dir_ = pathlib.PurePosixPath(
             '/' + self.relative_path.parent.as_posix(),
         )
@@ -253,7 +257,7 @@ class Page:
             return (dir_ / name).as_posix()
 
 
-class Directory(Page):
+class Directory(Page, typing.Iterable[Page]):
     def __init__(self, path: pathlib.Path, parent: 'Directory' = None) -> None:
         self.path = path
         self.parent = parent
@@ -279,7 +283,7 @@ class Directory(Page):
     def __str__(self) -> str:
         return '<Directory {}>'.format(self.path)
 
-    def __iter__(self) -> typing.Iterable[Page]:
+    def __iter__(self) -> typing.Iterator[Page]:
         for p in self.path.iterdir():
             if p.name.startswith('.'):
                 continue
@@ -289,18 +293,18 @@ class Directory(Page):
             else:
                 yield Directory(p, self)
 
-    def walk(self) -> typing.Iterable[Page]:
+    def walk(self) -> typing.Iterator[Page]:
         for p in self:
-            if p.is_dir:
+            if isinstance(p, Directory):
                 yield p
                 yield from p.walk()
             else:
                 yield p
 
     @property
-    def child_pages(self) -> typing.Iterable[Page]:
+    def child_pages(self) -> typing.Iterator[Page]:
         for p in self:
-            if not p.is_dir:
+            if not isinstance(p, Directory):
                 yield p
             else:
                 index = p.index_page
@@ -317,7 +321,7 @@ class Directory(Page):
         if self.config['autoindex']:
             return self
         else:
-            None
+            return None
 
     @property
     def auto_index_enabled(self) -> bool:
@@ -334,10 +338,6 @@ class Directory(Page):
     @property
     def is_page(self) -> bool:
         return self.auto_index_enabled
-
-    @property
-    def is_dir(self) -> bool:
-        return True
 
     @property
     def relative_path(self) -> pathlib.Path:
