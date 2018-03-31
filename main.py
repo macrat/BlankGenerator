@@ -115,6 +115,20 @@ class Config(collections.abc.Mapping):
         return Config(merge_dict(self._config, another), self)
 
 
+ConverterType = typing.Callable[[str], str]
+
+
+class ConvertersMap(dict, typing.MutableMapping[str, ConverterType]):
+    def __init__(self):
+        self['text/markdown'] = markdown.Markdown().convert
+
+    def default_converter(self, content: str) -> str:
+        return content
+
+    def __getitem__(self, mimetype: str) -> ConverterType:
+        return self.get(mimetype, self.default_converter)
+
+
 def read_renderable_file(file_: typing.IO) -> typing.Tuple[Config, str]:
     headers: typing.List[str] = []
     contents: typing.List[str] = []
@@ -135,9 +149,11 @@ def read_renderable_file(file_: typing.IO) -> typing.Tuple[Config, str]:
 class Page:
     def __init__(self,
                  path: pathlib.Path,
+                 converters: ConvertersMap,
                  parent: 'Directory') -> None:
 
         self.path = path
+        self.converters = converters
         self.parent: typing.Optional['Directory'] = parent
 
         self.renderable = False
@@ -185,7 +201,7 @@ class Page:
     def page_info(self) -> dict:
         return self.config['page'] or {}
 
-    def relations_info(self, ignore_urls: typing.Set[str] = set()) -> dict:
+    def render_info(self, ignore_urls: typing.Set[str] = set()) -> dict:
         ignore_urls.add(self.url)
 
         base = self
@@ -197,25 +213,28 @@ class Page:
                 'children': [],
                 'brothers': [],
                 'parent': base.parent.page_info,
+                'content': self.rendered_content,
             }
 
         return {
             'children': [
-                merge_dict(x.page_info, x.relations_info(set(ignore_urls)))
+                merge_dict(x.page_info, x.render_info(set(ignore_urls)))
                 for x in base.child_pages if x.url not in ignore_urls
             ],
             'brothers': [
-                merge_dict(x.page_info, x.relations_info(set(ignore_urls)))
+                merge_dict(x.page_info, x.render_info(set(ignore_urls)))
                 for x in base.parent.child_pages if x.url not in ignore_urls
             ] if base.parent is not None else [],
             'parent': None if base.parent is None else base.parent.page_info,
+            'content': self.rendered_content,
         }
 
-    def render(self, content: str) -> str:
-        return self.template.render(
-            **self.config.overlay(self.relations_info())
-                         .overlay({'content': content}),
-        )
+    @property
+    def rendered_content(self) -> str:
+        return self.converters[self.type](self.content)
+
+    def render(self) -> str:
+        return self.template.render(**self.config.overlay(self.render_info()))
 
     @property
     def is_page(self) -> bool:
@@ -258,8 +277,13 @@ class Page:
 
 
 class Directory(Page, typing.Iterable[Page]):
-    def __init__(self, path: pathlib.Path, parent: 'Directory' = None) -> None:
+    def __init__(self,
+                 path: pathlib.Path,
+                 converters: ConvertersMap,
+                 parent: 'Directory' = None) -> None:
+
         self.path = path
+        self.converters = converters
         self.parent = parent
 
         self.config = Config.from_path(
@@ -289,9 +313,9 @@ class Directory(Page, typing.Iterable[Page]):
                 continue
 
             if p.is_file():
-                yield Page(p, self)
+                yield Page(p, self.converters, self)
             else:
-                yield Directory(p, self)
+                yield Directory(p, self.converters, self)
 
     def walk(self) -> typing.Iterator[Page]:
         for p in self:
@@ -316,7 +340,7 @@ class Directory(Page, typing.Iterable[Page]):
         candidates = sorted(self.path.glob('index.*'))
 
         if len(candidates) > 0:
-            return Page(candidates[0], self)
+            return Page(candidates[0], self.converters, self)
 
         if self.config['autoindex']:
             return self
@@ -349,7 +373,8 @@ class Directory(Page, typing.Iterable[Page]):
 
 
 if __name__ == '__main__':
-    dir_ = Directory(pathlib.Path('./src'))
+    cm = ConvertersMap()
+    dir_ = Directory(pathlib.Path('./src'), cm)
 
     for f in dir_.walk():
         out_path = pathlib.Path('./dist') / f.output_path
@@ -358,13 +383,8 @@ if __name__ == '__main__':
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         if f.renderable:
-            if f.type == 'text/markdown':
-                content = markdown.Markdown().convert(f.content)
-            else:
-                content = f.content
-
             with out_path.open('w') as fp:
-                fp.write(f.render(content))
+                fp.write(f.render())
         else:
             with out_path.open('wb') as fp:
                 fp.write(f.content)
