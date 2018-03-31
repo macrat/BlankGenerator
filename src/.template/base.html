@@ -1,0 +1,23 @@
+<head>
+    {% if page.title %}
+        <title>{{ page.title }} - {{ site.title }}</title>
+    {% else %}
+        <title>{{ site.title }}</title>
+    {% endif %}
+</head>
+
+<body>
+	<nav>
+		<a href="/"><b>{{ site.title }}</b></a> <a href="/about.html">about</a> <a href="/blog/">blog</a>
+	</nav>
+
+	<div>
+		{% for path in page.path.parents|reverse %}
+			{% if not loop.first %}<a href="/{{ path }}">{{ path.name }}</a> /{% endif %}
+		{% endfor %}
+	</div>
+
+	<main>
+		{% block mainarea %}{{ content }}{% endblock %}
+	</main>
+</body>

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+
+{% block mainarea %}
+	<ul>
+	{% for child in children|sort(attribute='date', reverse=True) %}
+		<li><a href="{{ child.url }}">{% if child.title %}{{ child.title }}{% else %}{{ child.path.parent.name }}{% endif %}</a></li>
+	{% endfor %}</ul>
+{% endblock %}
