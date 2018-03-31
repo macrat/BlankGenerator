@@ -4,18 +4,43 @@
     {% else %}
         <title>{{ site.title }}</title>
     {% endif %}
+
+	<style>
+body {
+	margin: 0;
+}
+
+header {
+	padding: .5em;
+	border-bottom: 1px solid gray;
+}
+header a {
+	color: black;
+	text-decoration: none;
+}
+nav a {
+	margin-right: 1em;
+}
+#site-title {
+	font-weight: bold;
+}
+#nav-area {
+	margin: .3em;
+	font-size: 90%;
+}
+
+main {
+	margin: 1em;
+}
+	</style>
 </head>
 
 <body>
-	<nav>
-		<a href="/"><b>{{ site.title }}</b></a> <a href="/about.html">about</a> <a href="/blog/">blog</a>
-	</nav>
+	<header>
+		<nav><a href="/" id=site-title>{{ site.title | upper }}</a> <a href="/about.html">ABOUT</a> <a href="/blog/">BLOG</a></nav>
 
-	<div>
-		{% for path in page.path.parents|reverse %}
-			{% if not loop.first %}<a href="/{{ path }}">{{ path.name }}</a> /{% endif %}
-		{% endfor %}
-	</div>
+		<div id=nav-area>{% block navarea %}{% endblock %}</div>
+	</header>
 
 	<main>
 		{% block mainarea %}{{ content }}{% endblock %}

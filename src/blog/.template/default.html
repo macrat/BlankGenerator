@@ -1,5 +1,14 @@
 {% extends "base.html" %}
 
+{% block navarea %}
+	{% if page.path.parent %}
+		{% for path in page.path.parents|reverse %}
+			{% if not loop.first %}&gt; <a href="/{{ path }}">{{ path.name }}</a>{% endif %}
+		{% endfor %}
+		&gt;
+	{% endif %}
+{% endblock %}
+
 {% block mainarea %}
 	<h1>{{ page.title }}</h1>
 	<p><date>{{ page.date }}</date></p>

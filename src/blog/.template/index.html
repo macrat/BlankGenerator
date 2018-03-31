@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 
+{% block navarea %}
+	{% if page.url != '/blog/' %}
+		{% for path in page.path.parents|reverse %}
+			{% if not loop.first %}&gt; <a href="/{{ path }}">{{ path.name }}</a>{% endif %}
+		{% endfor %}
+	{% endif %}
+{% endblock %}
+
 {% block mainarea %}
 	<ul>
 	{% for child in children|sort(attribute='date', reverse=True) %}
