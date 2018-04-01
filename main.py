@@ -1,15 +1,12 @@
 import collections
-import mimetypes
 import pathlib
 import typing
 
 import jinja2
-import markdown
 import yaml
 
-
-mimetypes.add_type('text/markdown', '.md', False)
-mimetypes.add_type('text/markdown', '.markdown', True)
+import plugins
+import register
 
 
 class TemplateLoader(jinja2.BaseLoader):
@@ -115,20 +112,6 @@ class Config(collections.abc.Mapping):
         return Config(merge_dict(self._config, another), self)
 
 
-ConverterType = typing.Callable[[str], str]
-
-
-class ConvertersMap(dict, typing.MutableMapping[str, ConverterType]):
-    def __init__(self):
-        self['text/markdown'] = markdown.Markdown().convert
-
-    def default_converter(self, content: str) -> str:
-        return content
-
-    def __getitem__(self, mimetype: str) -> ConverterType:
-        return self.get(mimetype, self.default_converter)
-
-
 def read_renderable_file(file_: typing.IO) -> typing.Tuple[Config, str]:
     headers: typing.List[str] = []
     contents: typing.List[str] = []
@@ -149,11 +132,9 @@ def read_renderable_file(file_: typing.IO) -> typing.Tuple[Config, str]:
 class Page:
     def __init__(self,
                  path: pathlib.Path,
-                 converters: ConvertersMap,
                  parent: 'Directory') -> None:
 
         self.path = path
-        self.converters = converters
         self.parent: typing.Optional['Directory'] = parent
 
         self.renderable = False
@@ -182,7 +163,7 @@ class Page:
 
     @property
     def type(self) -> typing.Optional[str]:
-        return mimetypes.guess_type(self.path.name, False)[0]
+        return register.guess_mimetype(self.path.name)
 
     @property
     def layout(self) -> str:
@@ -231,7 +212,7 @@ class Page:
 
     @property
     def rendered_content(self) -> str:
-        return self.converters[self.type](self.content)
+        return register.converters[self.type](self.content)
 
     def render(self) -> str:
         return self.template.render(**self.config.overlay(self.render_info()))
@@ -279,11 +260,9 @@ class Page:
 class Directory(Page, typing.Iterable[Page]):
     def __init__(self,
                  path: pathlib.Path,
-                 converters: ConvertersMap,
                  parent: 'Directory' = None) -> None:
 
         self.path = path
-        self.converters = converters
         self.parent = parent
 
         self.config = Config.from_path(
@@ -313,9 +292,9 @@ class Directory(Page, typing.Iterable[Page]):
                 continue
 
             if p.is_file():
-                yield Page(p, self.converters, self)
+                yield Page(p, self)
             else:
-                yield Directory(p, self.converters, self)
+                yield Directory(p, self)
 
     def walk(self) -> typing.Iterator[Page]:
         for p in self:
@@ -340,7 +319,7 @@ class Directory(Page, typing.Iterable[Page]):
         candidates = sorted(self.path.glob('index.*'))
 
         if len(candidates) > 0:
-            return Page(candidates[0], self.converters, self)
+            return Page(candidates[0], self)
 
         if self.config['autoindex']:
             return self
@@ -373,8 +352,7 @@ class Directory(Page, typing.Iterable[Page]):
 
 
 if __name__ == '__main__':
-    cm = ConvertersMap()
-    dir_ = Directory(pathlib.Path('./src'), cm)
+    dir_ = Directory(pathlib.Path('./src'))
 
     for f in dir_.walk():
         out_path = pathlib.Path('./dist') / f.output_path
