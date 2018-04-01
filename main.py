@@ -6,8 +6,7 @@ import typing
 import jinja2
 import yaml
 
-import plugins
-import register
+import plugin
 
 
 class TemplateLoader(jinja2.BaseLoader):
@@ -145,11 +144,16 @@ class FileTreeNode:
 class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
     def __init__(self,
                  source: pathlib.Path,
-                 parent: 'Directory' = None) -> None:
+                 parent: 'Directory' = None,
+                 plugins: plugin.Plugins = None) -> None:
 
         super().__init__(parent)
 
         self.source = source
+        if plugins is None:
+            self.plugins = plugin.Plugins()
+        else:
+            self.plugins = plugins
 
         self.template_environment: jinja2.Environment
         self.template_environment = jinja2.Environment(loader=TemplateLoader(
@@ -180,6 +184,9 @@ class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
 
     def get_template(self, layout_name) -> jinja2.Template:
         return self.template_environment.get_template(layout_name)
+
+    def get_converter(self, suffix) -> plugin.ConverterType:
+        return self.plugins.get_converter(suffix)
 
     def _user_index_page(self) -> typing.Optional['Page']:
         for candidate in sorted(self.source.glob('index.*')):
@@ -214,7 +221,7 @@ class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
             if p.is_file():
                 yield Page(p, self)
             else:
-                yield Directory(p, self)
+                yield Directory(p, self, self.plugins)
 
     def pages(self) -> typing.Iterator['Page']:
         for page in self:
@@ -350,7 +357,7 @@ class RenderablePage(Page, metaclass=abc.ABCMeta):
         return (self.parent.config.overlay(self.relations_info())
                                   .overlay({'page': self.page_info()}))
 
-    def source_type(self) -> typing.Optional[str]:
+    def suffix(self) -> typing.Optional[str]:
         return None
 
     @abc.abstractmethod
@@ -358,7 +365,7 @@ class RenderablePage(Page, metaclass=abc.ABCMeta):
         pass
 
     def render(self, out: typing.BinaryIO) -> None:
-        converter = register.converters[self.source_type()]
+        converter = self.parent.get_converter(self.suffix())
         content = converter(self.content)
         template = self.parent.get_template(self.layout())
 
@@ -376,8 +383,8 @@ class ArticlePage(RenderablePage):
 
         self.source = source
 
-    def source_type(self) -> typing.Optional[str]:
-        return register.guess_mimetype(self.source.name)
+    def suffix(self) -> typing.Optional[str]:
+        return self.source.suffix
 
     def layout(self) -> str:
         page = self.config['page']

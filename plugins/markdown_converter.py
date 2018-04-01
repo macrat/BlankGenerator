@@ -1,15 +1,8 @@
 import markdown
 
-import register
 
+def init(register):
+    md = markdown.Markdown()
 
-register.mimetype('text/markdown', '.md')
-register.mimetype('text/markdown', '.markdown')
-
-
-md = markdown.Markdown()
-
-
-@register.converter('text/markdown')
-def convert(content: str) -> str:
-    return md.convert(content)
+    register.converter('.md', md.convert)
+    register.converter('.markdown', md.convert)
