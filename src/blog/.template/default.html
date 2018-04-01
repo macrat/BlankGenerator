@@ -3,7 +3,7 @@
 {% block navarea %}
 	{% if page.path.parent %}
 		{% for path in page.path.parents|reverse %}
-			{% if not loop.first %}&gt; <a href="/{{ path }}">{{ path.name }}</a>{% endif %}
+			{% if not loop.first %}&gt; <a href="{{ path }}/">{{ path.name }}</a>{% endif %}
 		{% endfor %}
 		&gt;
 	{% endif %}

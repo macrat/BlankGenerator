@@ -1,5 +1,6 @@
-import collections
+import abc
 import pathlib
+import shutil
 import typing
 
 import jinja2
@@ -12,7 +13,7 @@ import register
 class TemplateLoader(jinja2.BaseLoader):
     def __init__(self,
                  path: pathlib.Path,
-                 parent: 'TemplateLoader' = None) -> None:
+                 parent: jinja2.BaseLoader = None) -> None:
 
         self.path = path
         self.parent = parent
@@ -41,7 +42,7 @@ class TemplateLoader(jinja2.BaseLoader):
                 lambda: path.stat().st_mtime == mtime)
 
 
-def merge_dict(x: dict, y: dict) -> dict:
+def merge_dict(x: typing.Mapping, y: typing.Mapping) -> dict:
     """ merging dictionary
 
 
@@ -68,7 +69,7 @@ def merge_dict(x: dict, y: dict) -> dict:
     return result
 
 
-class Config(collections.abc.Mapping):
+class Config(typing.Mapping):
     def __init__(self,
                  data: typing.Union[str, dict],
                  parent: 'Config' = None) -> None:
@@ -93,8 +94,8 @@ class Config(collections.abc.Mapping):
         except FileNotFoundError:
             return cls('', parent)
 
-    def __str__(self):
-        return str(self._config)
+    def __str__(self) -> str:
+        return '<Config {}>'.format(self._config)
 
     def as_dict(self) -> dict:
         return dict(self._config)
@@ -108,8 +109,15 @@ class Config(collections.abc.Mapping):
     def __len__(self) -> int:
         return len(self._config)
 
-    def overlay(self, another: dict) -> 'Config':
+    def overlay(self, another: typing.Mapping) -> 'Config':
         return Config(merge_dict(self._config, another), self)
+
+
+def is_renderable(file_: typing.IO) -> bool:
+    try:
+        return file_.read(4) == '---\n'
+    except:
+        return False
 
 
 def read_renderable_file(file_: typing.IO) -> typing.Tuple[Config, str]:
@@ -129,165 +137,77 @@ def read_renderable_file(file_: typing.IO) -> typing.Tuple[Config, str]:
     return Config(''.join(headers)), ''.join(contents)
 
 
-class Page:
-    def __init__(self,
-                 path: pathlib.Path,
-                 parent: 'Directory') -> None:
-
-        self.path = path
-        self.parent: typing.Optional['Directory'] = parent
-
-        self.renderable = False
-        try:
-            with self.path.open() as f:
-                self.renderable = f.read(4) == '---\n'
-        except:
-            pass
-
-        if self.renderable:
-            with path.open() as f:
-                config, self.content = read_renderable_file(f)
-        else:
-            config = Config('')
-            with path.open('rb') as f:
-                self.content = f.read()
-
-        self.config = parent.config.overlay({'page': config.as_dict()})
-        self.config = self.config.overlay({'page': {
-            'path': self.output_path,
-            'url': self.url,
-        }})
-
-    def __str__(self) -> str:
-        return '<Page {}>'.format(self.path)
-
-    @property
-    def type(self) -> typing.Optional[str]:
-        return register.guess_mimetype(self.path.name)
-
-    @property
-    def layout(self) -> str:
-        if 'layout' in self.config['page']:
-            return self.config['page']['layout'] or 'default.html'
-        return 'default.html'
-
-    @property
-    def template(self) -> jinja2.Template:
-        if isinstance(self, Directory):
-            return self.template_environment.get_template(self.layout)
-        else:
-            return self.parent.template_environment.get_template(self.layout)
-
-    @property
-    def page_info(self) -> dict:
-        return self.config['page'] or {}
-
-    def render_info(self, ignore_urls: typing.Set[str] = set()) -> dict:
-        ignore_urls.add(self.url)
-
-        base = self
-        if (not isinstance(self, Directory) and self.path.stem == 'index'):
-            base = self.parent
-
-        if not isinstance(base, Directory):
-            return {
-                'children': [],
-                'brothers': [],
-                'parent': base.parent.page_info,
-                'content': self.rendered_content,
-            }
-
-        return {
-            'children': [
-                merge_dict(x.page_info, x.render_info(set(ignore_urls)))
-                for x in base.child_pages if x.url not in ignore_urls
-            ],
-            'brothers': [
-                merge_dict(x.page_info, x.render_info(set(ignore_urls)))
-                for x in base.parent.child_pages if x.url not in ignore_urls
-            ] if base.parent is not None else [],
-            'parent': None if base.parent is None else base.parent.page_info,
-            'content': self.rendered_content,
-        }
-
-    @property
-    def rendered_content(self) -> str:
-        return register.converters[self.type](self.content)
-
-    def render(self) -> str:
-        return self.template.render(**self.config.overlay(self.render_info()))
-
-    @property
-    def is_page(self) -> bool:
-        return True
-
-    @property
-    def root_path(self) -> pathlib.Path:
-        if self.parent is None:
-            return self.path
-        else:
-            return self.parent.root_path
-
-    @property
-    def relative_path(self) -> pathlib.Path:
-        return self.path.relative_to(self.root_path)
-
-    @property
-    def output_path(self) -> pathlib.Path:
-        return self.relative_path.parent / (self.path.stem + '.html')
-
-    @property
-    def url(self) -> str:
-        dir_ = pathlib.PurePosixPath(
-            '/' + self.relative_path.parent.as_posix(),
-        )
-
-        name = self.relative_path.stem + '.html'
-
-        if name == 'index.html':
-            if self.config['directory_slash'] == 'index.html':
-                return (dir_ / 'index.html').as_posix()
-            elif self.config['directory_slash'] is False:
-                return dir_.as_posix()
-            elif dir_.as_posix() == '/':
-                return '/'
-            else:
-                return dir_.as_posix() + '/'
-        else:
-            return (dir_ / name).as_posix()
-
-
-class Directory(Page, typing.Iterable[Page]):
-    def __init__(self,
-                 path: pathlib.Path,
-                 parent: 'Directory' = None) -> None:
-
-        self.path = path
+class FileTreeNode:
+    def __init__(self, parent: 'Directory' = None) -> None:
         self.parent = parent
 
-        self.config = Config.from_path(
-            path,
-            parent.config if parent is not None else None,
-        )
-        self.config = self.config.overlay({'page': {
-            'path': self.output_path,
-            'url': self.url,
-        }})
 
-        self.content = ''
+class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
+    def __init__(self,
+                 source: pathlib.Path,
+                 parent: 'Directory' = None) -> None:
 
+        super().__init__(parent)
+
+        self.source = source
+
+        self.template_environment: jinja2.Environment
         self.template_environment = jinja2.Environment(loader=TemplateLoader(
-            self.path,
+            self.source,
             parent.template_environment.loader if parent is not None else None,
         ))
 
-        self.renderable = self.is_page
+        self.config: Config = Config.from_path(
+            source,
+            parent.config if parent is not None else None,
+        )
 
     def __str__(self) -> str:
-        return '<Directory {}>'.format(self.path)
+        root = self.root_path()
 
-    def __iter__(self) -> typing.Iterator[Page]:
-        for p in self.path.iterdir():
+        if root == self.source:
+            return '<Directory />'
+        else:
+            path = self.source.relative_to(root).as_posix()
+
+            return '<Directory /{}>'.format(path)
+
+    def root_path(self) -> pathlib.Path:
+        if self.parent is not None:
+            return self.parent.root_path()
+        else:
+            return self.source
+
+    def get_template(self, layout_name) -> jinja2.Template:
+        return self.template_environment.get_template(layout_name)
+
+    def _user_index_page(self) -> typing.Optional['Page']:
+        for candidate in sorted(self.source.glob('index.*')):
+            if candidate.suffix == '.html' or is_renderable(candidate.open()):
+                return Page(candidate, self)
+
+        return None
+
+    def auto_index_pages(self) -> typing.Iterator['AutoIndexPage']:
+        if not self.config['autoindex'] or self._user_index_page() is not None:
+            return iter([])
+
+        return iter([AutoIndexPage(self)])
+
+    def index_page(self) -> typing.Optional['Page']:
+        user_index = self._user_index_page()
+        if user_index is not None:
+            return user_index
+
+        if self.config['autoindex']:
+            return next(self.auto_index_pages())
+
+        return None
+
+    def __iter__(self) -> typing.Iterator[FileTreeNode]:
+        yield from self.auto_index_pages()
+
+        for p in self.source.iterdir():
             if p.name.startswith('.'):
                 continue
 
@@ -296,7 +216,17 @@ class Directory(Page, typing.Iterable[Page]):
             else:
                 yield Directory(p, self)
 
-    def walk(self) -> typing.Iterator[Page]:
+    def pages(self) -> typing.Iterator['Page']:
+        for page in self:
+            if isinstance(page, Page):
+                if not isinstance(page, IndexPageMixIn):
+                    yield page
+            else:
+                index = page.index_page()
+                if index is not None:
+                    yield index
+
+    def walk(self) -> typing.Iterator[FileTreeNode]:
         for p in self:
             if isinstance(p, Directory):
                 yield p
@@ -304,65 +234,225 @@ class Directory(Page, typing.Iterable[Page]):
             else:
                 yield p
 
-    @property
-    def child_pages(self) -> typing.Iterator[Page]:
-        for p in self:
-            if not isinstance(p, Directory):
-                yield p
+
+class Page(FileTreeNode, metaclass=abc.ABCMeta):
+    def __init__(self, parent: Directory) -> None:
+        super().__init__(parent)
+
+    def __new__(cls, source: pathlib.Path, parent: Directory) -> 'Page':
+        if cls is Page:
+            if is_renderable(source.open()):
+                if source.stem == 'index':
+                    cls = IndexPage
+                else:
+                    cls = ArticlePage
             else:
-                index = p.index_page
-                if index is not None:
-                    yield index
+                cls = AssetPage
 
-    @property
-    def index_page(self) -> typing.Optional[Page]:
-        candidates = sorted(self.path.glob('index.*'))
+        self = FileTreeNode.__new__(cls)
+        self.__init__(source, parent)
+        return self
 
-        if len(candidates) > 0:
-            return Page(candidates[0], self)
+    def __str__(self) -> str:
+        return '<{} {}>'.format(self.__class__.__name__, '/' / self.path())
 
-        if self.config['autoindex']:
-            return self
+    @abc.abstractmethod
+    def path(self) -> pathlib.Path:
+        pass
+
+    def url(self) -> str:
+        return ('/' / self.path()).as_posix()
+
+    @abc.abstractmethod
+    def render(self, out: typing.BinaryIO) -> None:
+        pass
+
+    @abc.abstractmethod
+    def page_info(self) -> Config:
+        pass
+
+    def parent_page(self) -> typing.Optional['Page']:
+        return self.parent.index_page()
+
+    def children(self) -> typing.Iterator['Page']:
+        return iter([])
+
+    def brothers(self) -> typing.Iterator['Page']:
+        for page in self.parent.pages():
+            if page.url() != self.url():
+                yield page
+
+    def relations_info(self,
+                       ignore_urls: typing.Set[str] = set()) -> typing.Mapping:
+        ignore_urls = set(ignore_urls)
+        ignore_urls.add(self.url())
+
+        parent_page = self.parent_page()
+        parent_info = parent_page.page_info() if parent_page else None
+
+        return {
+            'children': [
+                p.page_info().overlay(p.relations_info(ignore_urls)).as_dict()
+                for p in self.children() if p.url() not in ignore_urls
+            ],
+            'brothers': [
+                p.page_info().overlay(p.relations_info(ignore_urls)).as_dict()
+                for p in self.brothers() if p.url() not in ignore_urls
+            ],
+            'parent': parent_info.as_dict() if parent_info else None,
+        }
+
+
+class AssetPage(Page):
+    def __init__(self, source: pathlib.Path, parent: Directory) -> None:
+        super().__init__(parent)
+
+        self._source = source
+        self._path = source.relative_to(parent.root_path())
+
+    def path(self) -> pathlib.Path:
+        return self._path
+
+    def render(self, out: typing.BinaryIO) -> None:
+        shutil.copyfileobj(self._source.open('rb'), out)
+
+    def page_info(self) -> Config:
+        return Config({
+            'path': pathlib.PurePosixPath('/' / self.path()),
+            'url': self.url(),
+        })
+
+
+class RenderablePage(Page, metaclass=abc.ABCMeta):
+    def __init__(self,
+                 path: pathlib.Path,
+                 parent: Directory,
+                 config: Config,
+                 content: str = '') -> None:
+
+        super().__init__(parent)
+
+        self._path = path
+
+        self.config = config
+        self.content = content
+
+    def path(self) -> pathlib.Path:
+        return self._path
+
+    def page_info(self) -> Config:
+        return self.config.overlay({
+            'path': pathlib.PurePosixPath('/' / self.path()),
+            'url': self.url(),
+        })
+
+    def rendering_context(self) -> Config:
+        return (self.parent.config.overlay(self.relations_info())
+                                  .overlay({'page': self.page_info()}))
+
+    def source_type(self) -> typing.Optional[str]:
+        return None
+
+    @abc.abstractmethod
+    def layout(self) -> str:
+        pass
+
+    def render(self, out: typing.BinaryIO) -> None:
+        converter = register.converters[self.source_type()]
+        content = converter(self.content)
+        template = self.parent.get_template(self.layout())
+
+        out.write(template.render(self.rendering_context().overlay({
+            'content': content,
+        })).encode('utf-8'))
+
+
+class ArticlePage(RenderablePage):
+    def __init__(self, source: pathlib.Path, parent: Directory) -> None:
+        basepath = source.relative_to(parent.root_path()).parent
+        path = basepath / (source.stem + '.html')
+
+        super().__init__(path, parent, *read_renderable_file(source.open()))
+
+        self.source = source
+
+    def source_type(self) -> typing.Optional[str]:
+        return register.guess_mimetype(self.source.name)
+
+    def layout(self) -> str:
+        page = self.config['page']
+
+        if isinstance(page, dict) and 'layout' in page:
+            return page['layout'] or 'default.html'
+
+        return 'default.html'
+
+
+class IndexPageMixIn(Page):
+    def parent_page(self) -> typing.Optional['Page']:
+        if self.parent.parent is not None:
+            return self.parent.parent.index_page()
         else:
             return None
 
-    @property
-    def auto_index_enabled(self) -> bool:
-        return self.config['autoindex'] and self.index_page is not None
+    def children(self) -> typing.Iterator['Page']:
+        for page in self.parent.pages():
+            yield page
 
-    @property
-    def type(self) -> typing.Optional[str]:
-        return None
+    def brothers(self) -> typing.Iterator['Page']:
+        if self.parent.parent is None:
+            return
 
-    @property
-    def layout(self):
-        return self.config['autoindex'] or 'index.html'
+        for page in self.parent.parent.pages():
+            if page.url() != self.url():
+                yield page
 
-    @property
-    def is_page(self) -> bool:
-        return self.auto_index_enabled
+    def url(self) -> str:
+        directory_slash = self.config['directory_slash']
+        if directory_slash is None:
+            directory_slash = self.parent.config['directory_slash']
 
-    @property
-    def relative_path(self) -> pathlib.Path:
-        return self.path.relative_to(self.root_path) / 'index.html'
+        if directory_slash == 'index.html':
+            return '/' + self.path().as_posix()
 
-    @property
-    def output_path(self) -> pathlib.Path:
-        return self.relative_path
+        path = ('/' / self.path().parent).as_posix()
+
+        if directory_slash is not False and path != '/':
+            path += '/'
+
+        return path
+
+
+class IndexPage(ArticlePage, IndexPageMixIn):
+    pass
+
+
+class AutoIndexPage(RenderablePage, IndexPageMixIn):
+    def __init__(self, parent: Directory) -> None:
+        path = parent.source.relative_to(parent.root_path()) / 'index.html'
+
+        super().__init__(path, parent, Config(parent.config['page'] or {}))
+
+    def __new__(cls, parent: Directory) -> None:
+        self = FileTreeNode.__new__(cls)
+        self.__init__(parent)
+        return self
+
+    def layout(self) -> str:
+        return self.parent.config['autoindex'] or 'index.html'
 
 
 if __name__ == '__main__':
     dir_ = Directory(pathlib.Path('./src'))
 
-    for f in dir_.walk():
-        out_path = pathlib.Path('./dist') / f.output_path
+    for page in dir_.walk():
+        if isinstance(page, Directory):
+            continue
 
-        print(f.path, '->', out_path, '({})'.format(f.url))
+        out_path = './dist' / page.path()
+
+        print('{} -> {} ({})'.format(page.path(), out_path, page.url()))
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        if f.renderable:
-            with out_path.open('w') as fp:
-                fp.write(f.render())
-        else:
-            with out_path.open('wb') as fp:
-                fp.write(f.content)
+        with out_path.open('wb') as fp:
+            page.render(fp)
