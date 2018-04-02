@@ -28,14 +28,19 @@ class Plugins:
         self.converters = ConvertersMap()
 
         for p in path.iterdir():
-            if p.is_file():
-                spec = importlib.util.spec_from_file_location(p.stem,
-                                                              str(p.resolve()))
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
+            if not p.is_file():
+                continue
 
-                # ignore errors because this is meta programming
-                mod.init(Register(self))  # type: ignore
+            spec = importlib.util.spec_from_file_location(p.stem,
+                                                          str(p.resolve()))
+            if spec is None:
+                continue
+
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+
+            # ignore errors because this is meta programming
+            mod.init(Register(self))  # type: ignore
 
     def get_converter(self, suffix: str) -> ConverterType:
         return self.converters[suffix]
