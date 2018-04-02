@@ -25,7 +25,6 @@ class ConvertersMap(dict, typing.MutableMapping[str, ConverterType]):
 
 class Plugins:
     def __init__(self, path: pathlib.Path = pathlib.Path('./plugins')) -> None:
-        self.plugins = []
         self.converters = ConvertersMap()
 
         for p in path.iterdir():
@@ -34,9 +33,9 @@ class Plugins:
                                                               str(p.resolve()))
                 mod = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(mod)
-                self.plugins.append(mod)
 
-                mod.init(Register(self))
+                # ignore errors because this is meta programming
+                mod.init(Register(self))  # type: ignore
 
     def get_converter(self, suffix: str) -> ConverterType:
         return self.converters[suffix]

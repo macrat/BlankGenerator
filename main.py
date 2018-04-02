@@ -228,7 +228,7 @@ class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
             if isinstance(page, Page):
                 if not isinstance(page, IndexPageMixIn):
                     yield page
-            else:
+            elif isinstance(page, Directory):
                 index = page.index_page()
                 if index is not None:
                     yield index
@@ -246,7 +246,10 @@ class Page(FileTreeNode, metaclass=abc.ABCMeta):
     def __init__(self, parent: Directory) -> None:
         super().__init__(parent)
 
-    def __new__(cls, source: pathlib.Path, parent: Directory) -> 'Page':
+    def __new__(cls: typing.Type,
+                source: pathlib.Path,
+                parent: Directory) -> 'Page':
+
         if cls is Page:
             if is_renderable(source.open()):
                 if source.stem == 'index':
@@ -398,6 +401,8 @@ class ArticlePage(RenderablePage):
 
 
 class IndexPageMixIn(Page):
+    config: Config = None
+
     def parent_page(self) -> typing.Optional['Page']:
         if self.parent.parent is not None:
             return self.parent.parent.index_page()
@@ -440,28 +445,32 @@ class AutoIndexPage(RenderablePage, IndexPageMixIn):
     def __init__(self, parent: Directory) -> None:
         path = parent.source.relative_to(parent.root_path()) / 'index.html'
 
-        super().__init__(path, parent, Config(parent.config['page'] or {}))
+        page_config = parent.config['page']
 
-    def __new__(cls, parent: Directory) -> None:
+        super().__init__(
+            path,
+            parent,
+            Config(page_config if isinstance(page_config, dict) else {}),
+        )
+
+    def __new__(cls: typing.Type, parent: Directory) -> None:
         self = FileTreeNode.__new__(cls)
         self.__init__(parent)
         return self
 
     def layout(self) -> str:
-        return self.parent.config['autoindex'] or 'index.html'
+        return str(self.parent.config['autoindex'] or 'index.html')
 
 
 if __name__ == '__main__':
     dir_ = Directory(pathlib.Path('./src'))
 
     for page in dir_.walk():
-        if isinstance(page, Directory):
-            continue
+        if isinstance(page, Page):
+            out_path = './dist' / page.path()
 
-        out_path = './dist' / page.path()
+            print('{} -> {} ({})'.format(page.path(), out_path, page.url()))
 
-        print('{} -> {} ({})'.format(page.path(), out_path, page.url()))
-
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        with out_path.open('wb') as fp:
-            page.render(fp)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with out_path.open('wb') as fp:
+                page.render(fp)
