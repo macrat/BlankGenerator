@@ -3,11 +3,14 @@ import pathlib
 import typing
 
 
-ConverterType = typing.Callable[[str], str]
+ConverterType = typing.Callable[[str, typing.Mapping[str, typing.Any]], str]
 
 
 class ConvertersMap(dict, typing.MutableMapping[str, ConverterType]):
-    def default_converter(self, content: str) -> str:
+    def default_converter(self,
+                          content: str,
+                          context: typing.Mapping[str, typing.Any]) -> str:
+
         return content
 
     def __setitem__(self, suffix: str, converter: ConverterType) -> None:

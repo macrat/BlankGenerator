@@ -365,11 +365,13 @@ class RenderablePage(Page, metaclass=abc.ABCMeta):
         pass
 
     def render(self, out: typing.BinaryIO) -> None:
+        context = self.rendering_context()
+
         converter = self.parent.get_converter(self.suffix())
-        content = converter(self.content)
+        content = converter(self.content, context.as_dict())
         template = self.parent.get_template(self.layout())
 
-        out.write(template.render(self.rendering_context().overlay({
+        out.write(template.render(context.overlay({
             'content': content,
         })).encode('utf-8'))
 
