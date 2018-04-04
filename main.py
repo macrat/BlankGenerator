@@ -1,6 +1,7 @@
 import abc
 import pathlib
 import shutil
+import sys
 import typing
 
 import jinja2
@@ -462,15 +463,23 @@ class AutoIndexPage(RenderablePage, IndexPageMixIn):
         return str(self.parent.config['autoindex'] or 'index.html')
 
 
-if __name__ == '__main__':
-    dir_ = Directory(pathlib.Path('./src'))
+def build_all(src: pathlib.Path,
+              dest: pathlib.Path,
+              log: typing.TextIO = sys.stdout) -> None:
+
+    dir_ = Directory(src)
 
     for page in dir_.walk():
         if isinstance(page, Page):
-            out_path = './dist' / page.path()
+            out_path = dest / page.path()
 
-            print('{} -> {} ({})'.format(page.path(), out_path, page.url()))
+            print('{} -> {} ({})'.format(page.path(), out_path, page.url()),
+                  file=log)
 
             out_path.parent.mkdir(parents=True, exist_ok=True)
             with out_path.open('wb') as fp:
                 page.render(fp)
+
+
+if __name__ == '__main__':
+    build_all(pathlib.Path('./src'), pathlib.Path('./dist'))
