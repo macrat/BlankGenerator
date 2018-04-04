@@ -1,4 +1,5 @@
 import abc
+import argparse
 import pathlib
 import shutil
 import sys
@@ -482,4 +483,20 @@ def build_all(src: pathlib.Path,
 
 
 if __name__ == '__main__':
-    build_all(pathlib.Path('./src'), pathlib.Path('./dist'))
+    parser = argparse.ArgumentParser(description='Static site generator.')
+
+    parser.add_argument('source',
+                        metavar='SOURCE',
+                        default='./',
+                        nargs='?',
+                        help='The directory of source files. (default: ./)')
+
+    parser.add_argument('-o',
+                        '--output',
+                        metavar='DIRECTORY',
+                        default='./_site',
+                        help='The directory for output. (default: ./_site)')
+
+    args = parser.parse_args()
+
+    build_all(pathlib.Path(args.source), pathlib.Path(args.output))
