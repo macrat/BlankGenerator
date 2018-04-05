@@ -5,81 +5,9 @@ import shutil
 import sys
 import typing
 
-import yaml
-
+import config
 import plugin
 import template
-
-
-def merge_dict(x: typing.Mapping, y: typing.Mapping) -> dict:
-    """ merging dictionary
-
-
-    Merge two dictionaries. Override with a value of `y` if key was collision.
-    >>> merge_dict({'a': 1, 'b': 2, 'c': 4}, {'c': 0, 'd': 10})
-    {'a': 1, 'b': 2, 'c': 0, 'd': 10}
-
-    Merge will do recursively.
-    >>> merge_dict({'parent': {'child': 1}}, {'parent': {'children': [2, 3]}})
-    {'parent': {'child': 1, 'children': [2, 3]}}
-    """
-
-    result = {}
-
-    for k, v in x.items():
-        result[k] = v
-
-    for k, v in y.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = merge_dict(result[k], v)
-        else:
-            result[k] = v
-
-    return result
-
-
-class Config(typing.Mapping):
-    def __init__(self,
-                 data: typing.Union[str, dict],
-                 parent: 'Config' = None) -> None:
-
-        self.parent = parent
-
-        self._config = data if isinstance(data, dict) else yaml.load(data)
-        if self._config is None:
-            self._config = {}
-
-        if parent is not None:
-            self._config = merge_dict(parent.as_dict(), self._config)
-
-    @classmethod
-    def from_path(cls,
-                  path: pathlib.Path,
-                  parent: 'Config' = None) -> 'Config':
-
-        try:
-            with (path / '.bg.yml').open() as f:
-                return cls(f.read(), parent)
-        except FileNotFoundError:
-            return cls('', parent)
-
-    def __str__(self) -> str:
-        return '<Config {}>'.format(self._config)
-
-    def as_dict(self) -> dict:
-        return dict(self._config)
-
-    def __getitem__(self, key: str) -> object:
-        return self._config.get(key)
-
-    def __iter__(self) -> typing.Iterator:
-        return iter(self._config)
-
-    def __len__(self) -> int:
-        return len(self._config)
-
-    def overlay(self, another: typing.Mapping) -> 'Config':
-        return Config(merge_dict(self._config, another), self)
 
 
 def is_renderable(file_: typing.IO) -> bool:
@@ -89,7 +17,7 @@ def is_renderable(file_: typing.IO) -> bool:
         return False
 
 
-def read_renderable_file(file_: typing.IO) -> typing.Tuple[Config, str]:
+def read_renderable_file(file_: typing.IO) -> typing.Tuple[config.Config, str]:
     headers: typing.List[str] = []
     contents: typing.List[str] = []
 
@@ -103,7 +31,7 @@ def read_renderable_file(file_: typing.IO) -> typing.Tuple[Config, str]:
             continue
         target.append(line)
 
-    return Config(''.join(headers)), ''.join(contents)
+    return config.Config(''.join(headers)), ''.join(contents)
 
 
 class FileTreeNode:
@@ -130,7 +58,7 @@ class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
             parent.template if parent is not None else None,
         )
 
-        self.config: Config = Config.from_path(
+        self.config: config.Config = config.Config.from_path(
             source,
             parent.config if parent is not None else None,
         )
@@ -244,7 +172,7 @@ class Page(FileTreeNode, metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def page_info(self) -> Config:
+    def page_info(self) -> config.Config:
         pass
 
     def parent_page(self) -> typing.Optional['Page']:
@@ -292,8 +220,8 @@ class AssetPage(Page):
     def render(self, out: typing.BinaryIO) -> None:
         shutil.copyfileobj(self._source.open('rb'), out)
 
-    def page_info(self) -> Config:
-        return Config({
+    def page_info(self) -> config.Config:
+        return config.Config({
             'path': pathlib.PurePosixPath('/' / self.path()),
             'url': self.url(),
         })
@@ -303,7 +231,7 @@ class RenderablePage(Page, metaclass=abc.ABCMeta):
     def __init__(self,
                  path: pathlib.Path,
                  parent: Directory,
-                 config: Config,
+                 config: config.Config,
                  content: str = '') -> None:
 
         super().__init__(parent)
@@ -316,13 +244,13 @@ class RenderablePage(Page, metaclass=abc.ABCMeta):
     def path(self) -> pathlib.Path:
         return self._path
 
-    def page_info(self) -> Config:
+    def page_info(self) -> config.Config:
         return self.config.overlay({
             'path': pathlib.PurePosixPath('/' / self.path()),
             'url': self.url(),
         })
 
-    def rendering_context(self) -> Config:
+    def rendering_context(self) -> config.Config:
         return (self.parent.config.overlay(self.relations_info())
                                   .overlay({'page': self.page_info()}))
 
@@ -366,8 +294,6 @@ class ArticlePage(RenderablePage):
 
 
 class IndexPageMixIn(Page):
-    config: Config = None
-
     def parent_page(self) -> typing.Optional['Page']:
         if self.parent.parent is not None:
             return self.parent.parent.index_page()
@@ -412,11 +338,10 @@ class AutoIndexPage(RenderablePage, IndexPageMixIn):
 
         page_config = parent.config['page']
 
-        super().__init__(
-            path,
-            parent,
-            Config(page_config if isinstance(page_config, dict) else {}),
-        )
+        conf = config.Config(page_config
+                             if isinstance(page_config, dict)
+                             else {})
+        super().__init__(path, parent, conf)
 
     def __new__(cls: typing.Type, parent: Directory) -> None:
         self = FileTreeNode.__new__(cls)
