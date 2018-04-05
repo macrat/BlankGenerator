@@ -2,6 +2,7 @@ import argparse
 import pathlib
 
 import utils
+import watch
 
 
 if __name__ == '__main__':
@@ -19,6 +20,19 @@ if __name__ == '__main__':
                         default='./_site',
                         help='The directory for output. (default: ./_site)')
 
+    parser.add_argument(
+        '-w',
+        '--watch',
+        action='store_true',
+        help='Enable watching source directory and auto rebuild.',
+    )
+
     args = parser.parse_args()
 
-    utils.build_all(pathlib.Path(args.source), pathlib.Path(args.output))
+    src = pathlib.Path(args.source)
+    dest = pathlib.Path(args.output)
+
+    if args.watch:
+        watch.run(src, dest)
+    else:
+        utils.build_all(src, dest)
