@@ -5,42 +5,10 @@ import shutil
 import sys
 import typing
 
-import jinja2
 import yaml
 
 import plugin
-
-
-class TemplateLoader(jinja2.BaseLoader):
-    def __init__(self,
-                 path: pathlib.Path,
-                 parent: jinja2.BaseLoader = None) -> None:
-
-        self.path = path
-        self.parent = parent
-
-    def __str__(self) -> str:
-        return '<TemplateLoader {}>'.format(self.path)
-
-    def get_source(self, environment: jinja2.Environment, template: str) \
-            -> typing.Tuple[str, str, typing.Callable[[], bool]]:
-
-        path = self.path / '.template' / template
-
-        if not path.exists():
-            if self.parent is not None:
-                return self.parent.get_source(environment, template)
-            else:
-                raise jinja2.TemplateNotFound(template)
-
-        with path.open() as f:
-            source = f.read()
-
-        mtime = path.stat().st_mtime
-
-        return (source,
-                str(path.resolve()),
-                lambda: path.stat().st_mtime == mtime)
+import template
 
 
 def merge_dict(x: typing.Mapping, y: typing.Mapping) -> dict:
@@ -157,11 +125,10 @@ class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
         else:
             self.plugins = plugins
 
-        self.template_environment: jinja2.Environment
-        self.template_environment = jinja2.Environment(loader=TemplateLoader(
+        self.template: template.TemplateManager = template.TemplateManager(
             self.source,
-            parent.template_environment.loader if parent is not None else None,
-        ))
+            parent.template if parent is not None else None,
+        )
 
         self.config: Config = Config.from_path(
             source,
@@ -183,9 +150,6 @@ class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
             return self.parent.root_path()
         else:
             return self.source
-
-    def get_template(self, layout_name) -> jinja2.Template:
-        return self.template_environment.get_template(layout_name)
 
     def get_converter(self, suffix) -> plugin.ConverterType:
         return self.plugins.get_converter(suffix)
@@ -374,9 +338,8 @@ class RenderablePage(Page, metaclass=abc.ABCMeta):
 
         converter = self.parent.get_converter(self.suffix())
         content = converter(self.content, context.as_dict())
-        template = self.parent.get_template(self.layout())
 
-        out.write(template.render(context.overlay({
+        out.write(self.parent.template.render(self.layout(), context.overlay({
             'content': content,
         })).encode('utf-8'))
 
