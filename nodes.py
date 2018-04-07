@@ -1,4 +1,6 @@
 import abc
+import jinja2
+import math
 import pathlib
 import shutil
 import typing
@@ -112,9 +114,35 @@ class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
 
     def auto_index_pages(self) -> typing.Iterator['AutoIndexPage']:
         if not self.config['autoindex'] or self._user_index_page() is not None:
-            return iter([])
+            return
 
-        return iter([AutoIndexPage(self)])
+        confs = self.config['autoindex']
+        if isinstance(confs, str):
+            confs = [{'layout': confs}]
+
+        if isinstance(confs, dict):
+            confs = [confs]
+
+        if isinstance(confs, list):
+            for conf in confs:
+                if isinstance(conf, str):
+                    conf = {'layout': conf}
+
+                children = tuple(self.get_children(conf.get('source', '*')))
+
+                pagenate = conf.get('pagenate', 1)
+                if not isinstance(pagenate, int) or pagenate <= 0:
+                    pagenate = 1
+
+                for i in range(0, len(children), pagenate):
+                    yield AutoIndexPage(
+                        children[i:i+pagenate],
+                        self,
+                        i // pagenate,
+                        math.ceil(len(children) / pagenate),
+                        conf.get('target', 'index.html'),
+                        conf.get('layout', 'index.html'),
+                    )
 
     def index_page(self) -> typing.Optional['Page']:
         user_index = self._user_index_page()
@@ -122,7 +150,11 @@ class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
             return user_index
 
         if self.config['autoindex']:
-            return next(self.auto_index_pages())
+            try:
+                return next(self.auto_index_pages())
+            except StopIteration:
+                print('stop', self.source)
+                pass
 
         return None
 
@@ -175,7 +207,7 @@ class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
             return path.name.startswith('.')
 
         for path in self.source.glob(pattern):
-            if not is_hidden(path):
+            if not is_hidden(path) and path.stem != 'index':
                 yield self.get_child(path)
 
 
@@ -297,6 +329,14 @@ class RenderablePage(Page, metaclass=abc.ABCMeta):
         return (self.parent.config.overlay(self.relations_info())
                                   .overlay({'page': self.page_info()}))
 
+    def rendering_context_with_content(self) -> config.Config:
+        context = self.rendering_context()
+
+        converter = self.parent.get_converter(self.suffix())
+        content = converter(self.content, context.as_dict())
+
+        return context.overlay({'content': content})
+
     def suffix(self) -> typing.Optional[str]:
         return None
 
@@ -305,14 +345,10 @@ class RenderablePage(Page, metaclass=abc.ABCMeta):
         pass
 
     def render(self, out: typing.BinaryIO) -> None:
-        context = self.rendering_context()
-
-        converter = self.parent.get_converter(self.suffix())
-        content = converter(self.content, context.as_dict())
-
-        out.write(self.parent.template.render(self.layout(), context.overlay({
-            'content': content,
-        })).encode('utf-8'))
+        out.write(self.parent.template.render(
+            self.layout(),
+            self.rendering_context_with_content(),
+        ).encode('utf-8'))
 
 
 class ArticlePage(RenderablePage):
@@ -376,8 +412,19 @@ class IndexPage(ArticlePage, IndexPageMixIn):
 
 
 class AutoIndexPage(RenderablePage, IndexPageMixIn):
-    def __init__(self, parent: Directory) -> None:
-        path = parent.source.relative_to(parent.root_path()) / 'index.html'
+    def __init__(self,
+                 sources: typing.Iterable[FileTreeNode],
+                 parent: Directory,
+                 page_num: int = 0,
+                 page_max: int = 1,
+                 file_name: str = 'index.html',
+                 layout: str = 'index.html') -> None:
+
+        fname = jinja2.Template(file_name).render({'pagenate': {
+            'num': page_num,
+            'max': page_max,
+        }})
+        path = parent.source.relative_to(parent.root_path()) / fname
 
         page_config = parent.config['page']
 
@@ -386,10 +433,35 @@ class AutoIndexPage(RenderablePage, IndexPageMixIn):
                              else {})
         super().__init__(path, parent, conf)
 
-    def __new__(cls: typing.Type, parent: Directory) -> None:
+        self.page_num = page_num
+        self.page_max = page_max
+
+        self.sources = tuple(sources)
+        self._layout = layout
+
+    def contents(self) -> typing.Iterator[typing.Mapping[str, typing.Any]]:
+        for p in self.sources:
+            if isinstance(p, Page):
+                yield p.rendering_context_with_content()
+            elif isinstance(p, Directory):
+                index = p.index_page()
+                if index is not None:
+                    yield index.rendering_context_with_content()
+
+    def __new__(cls: typing.Type, *args, **kwds) -> None:
         self = FileTreeNode.__new__(cls)
-        self.__init__(parent)
+        self.__init__(*args, **kwds)
         return self
 
+    def rendering_context(self) -> config.Config:
+        return super().rendering_context().overlay({
+            'pagenate': {'num': self.page_num, 'max': self.page_max},
+        })
+
+    def rendering_context_with_content(self) -> config.Config:
+        return self.rendering_context().overlay({
+            'content': tuple(self.contents()),
+        })
+
     def layout(self) -> str:
-        return str(self.parent.config['autoindex'] or 'index.html')
+        return self._layout

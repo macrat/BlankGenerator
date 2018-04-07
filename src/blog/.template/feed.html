@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block navarea %}
+	{% if page.url != '/blog/' %}
+		{% for path in page.path.parents|reverse %}
+			{% if not loop.first %}&gt; <a href="{{ path }}/">{{ path.name }}</a>{% endif %}
+		{% endfor %}
+	{% endif %}
+{% endblock %}
+
+{% block mainarea %}
+	{% for child in content %}
+		<a href="{{ child.page.url }}" style="color: black; text-decoration: none">
+			<article style="border-bottom: 1px solid black">
+				<h1>{{ child.page.title }}</h1>
+				{{ child.content }}
+			</article>
+		</a>
+	{% endfor %}
+{% endblock %}

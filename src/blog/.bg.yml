@@ -1,1 +1,6 @@
-autoindex: index.html
+autoindex:
+  - layout: feed.html
+    target: index{{ pagenate.num }}.html
+    pagenate: 3
+    source: '*/*/*'
+  - index.html
