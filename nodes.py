@@ -156,6 +156,28 @@ class Directory(FileTreeNode, typing.Iterable[FileTreeNode]):
             else:
                 yield p
 
+    def get_child(self, path: pathlib.Path) -> FileTreeNode:
+        dir_ = self
+        for i, p in enumerate(reversed(path.relative_to(self.source).parents)):
+            if i != 0:
+                dir_ = Directory(self.source / p, dir_, self.plugins)
+
+        if path.is_file():
+            return Page(path, dir_)
+        else:
+            return Directory(path, dir_, self.plugins)
+
+    def get_children(self, pattern: str) -> typing.Iterator[FileTreeNode]:
+        def is_hidden(path):
+            for p in path.relative_to(self.source).parents:
+                if p.name.startswith('.'):
+                    return True
+            return path.name.startswith('.')
+
+        for path in self.source.glob(pattern):
+            if not is_hidden(path):
+                yield self.get_child(path)
+
 
 class Page(FileTreeNode, metaclass=abc.ABCMeta):
     def __init__(self, parent: Directory) -> None:
