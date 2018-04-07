@@ -9,6 +9,18 @@ import template
 
 
 def is_renderable(file_: typing.IO) -> bool:
+    """
+    >>> import io
+
+    >>> f = io.StringIO('---\\ntitle: hello\\n---\\ncontent\\n')
+    >>> is_renderable(f)
+    True
+
+    >>> f = io.StringIO('content\\n')
+    >>> is_renderable(f)
+    False
+    """
+
     try:
         return file_.read(4) == '---\n'
     except:
@@ -16,6 +28,17 @@ def is_renderable(file_: typing.IO) -> bool:
 
 
 def read_renderable_file(file_: typing.IO) -> typing.Tuple[config.Config, str]:
+    """
+    >>> import io
+
+    >>> f = io.StringIO('---\\ntitle: hello\\n---\\ncontent\\n')
+    >>> config, content = read_renderable_file(f)
+    >>> config.as_dict()
+    {'title': 'hello'}
+    >>> content
+    'content\\n'
+    """
+
     headers: typing.List[str] = []
     contents: typing.List[str] = []
 

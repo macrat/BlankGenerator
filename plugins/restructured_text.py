@@ -7,6 +7,11 @@ import jmespath
 
 
 def convert(content: str, context: typing.Mapping[str, typing.Any]) -> str:
+    """
+    >>> convert('hello :var:`name`!', {'name': 'world'})
+    '<div class="document">\\n<p>hello <span>world</span>!</p>\\n</div>\\n'
+    """
+
     def var_role(name: str,
                  rawtext: str,
                  text: str,
