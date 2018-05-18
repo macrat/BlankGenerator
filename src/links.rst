@@ -1,8 +1,10 @@
 ---
+title: links
+autotitle: false
 ---
 
-links
-=====
+[:var:`page.title`]
+===================
 
 * :var:`site.title`
 * `GitHub repository <https://github.com/macrat/blankgenerator>`_
